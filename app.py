@@ -3,64 +3,106 @@ from serpapi import GoogleSearch
 import pandas as pd
 import datetime
 
-st.set_page_config(page_title="Google PM New Hire Finder", page_icon="🔍")
+st.set_page_config(page_title="Professional Hire Finder", page_icon="🕵️‍♂️", layout="wide")
 
 # --- SECRET HANDLING ---
-# This checks if the key exists in secrets.toml (local) or Streamlit Cloud (web)
 if "SERPAPI_KEY" in st.secrets:
     api_key = st.secrets["SERPAPI_KEY"]
 else:
-    # Fallback: if no secret is found, show the sidebar input
-    api_key = st.sidebar.text_input("SerpApi Key not found in secrets. Enter here:", type="password")
+    api_key = st.sidebar.text_input("SerpApi Key:", type="password", help="Get your key at serpapi.com")
 
-st.title("🔍 Google PM New Hire Finder")
-st.write("Targeting folks who joined Google in the last 4-6 months.")
+# --- SIDEBAR INPUTS ---
+st.sidebar.header("Search Parameters")
+target_company = st.sidebar.text_input("Target Company", value="Google")
+target_title = st.sidebar.text_input("Job Title", value="Product Manager")
 
-def get_target_months():
-    # Calculate 4-6 months ago dynamically
-    today = datetime.datetime.now()
-    months = []
-    for i in range(4, 7):  # 4, 5, 6 months ago
-        month_date = today - datetime.timedelta(days=30 * i)
-        month_str = month_date.strftime("%B %Y")
-        months.append(month_str)
-    return months
+# Month Selection
+all_months = [
+    "January", "February", "March", "April", "May", "June", 
+    "July", "August", "September", "October", "November", "December"
+]
+current_year = datetime.datetime.now().year
+selected_months = st.sidebar.multiselect("Months Joined", options=all_months, default=["August", "September"])
+selected_year = st.sidebar.selectbox("Year Joined", options=[current_year, current_year-1], index=0)
 
-if st.button("Search for New Hires"):
+# --- MAIN UI ---
+st.title("🕵️‍♂️ Professional Hire Finder")
+st.write(f"Searching for **{target_title}s** who joined **{target_company}** in **{', '.join(selected_months)} {selected_year}**.")
+
+if st.button("Run Search"):
     if not api_key:
-        st.error("Please provide a SerpApi Key via secrets.toml or the sidebar.")
+        st.error("Please provide a SerpApi Key.")
+    elif not selected_months:
+        st.warning("Please select at least one month.")
     else:
-        target_months = get_target_months()
         all_results = []
         
-        with st.spinner('Searching LinkedIn via Google...'):
-            for month in target_months:
-                # Optimized query for LinkedIn's "Started [Month] [Year]" format
-                query = f'site:linkedin.com/in/ "Product Manager" "Google" "Started {month}"'
+        # We use a status container to show progress
+        with st.status("Searching LinkedIn profiles...", expanded=True) as status:
+            for month in selected_months:
+                status.write(f"Querying {month} {selected_year}...")
                 
-                search = GoogleSearch({
-                    "engine": "google",
-                    "q": query,
-                    "api_key": api_key,
-                    "num": 10
-                })
+                # Dynamic Query Builder
+                # Logic: site:linkedin.com/in/ "Title" "Company" "Started Month Year"
+                query = f'site:linkedin.com/in/ "{target_title}" "{target_company}" "Started {month} {selected_year}"'
                 
-                results = search.get_dict().get("organic_results", [])
-                for r in results:
-                    all_results.append({
-                        "Name": r.get("title").split("-")[0].strip(),
-                        "Started": month,
-                        "Profile": r.get("link"),
-                        "Snippet": r.get("snippet")
+                try:
+                    search = GoogleSearch({
+                        "engine": "google",
+                        "q": query,
+                        "api_key": api_key,
+                        "num": 10  # Top 10 results per month
                     })
+                    
+                    results = search.get_dict().get("organic_results", [])
+                    
+                    for r in results:
+                        all_results.append({
+                            "Name": r.get("title").split("-")[0].strip(),
+                            "Company": target_company,
+                            "Title": target_title,
+                            "Joined": f"{month} {selected_year}",
+                            "Profile Link": r.get("link"),
+                            "Snippet": r.get("snippet")
+                        })
+                except Exception as e:
+                    st.error(f"Search failed for {month}: {e}")
+            
+            status.update(label="Search complete!", state="complete", expanded=False)
 
+        # --- DISPLAY RESULTS ---
         if all_results:
             df = pd.DataFrame(all_results)
-            st.success(f"Found {len(df)} profiles!")
-            st.dataframe(df)
             
-            # Download link
+            # Clean up: Remove duplicates if any
+            df = df.drop_duplicates(subset=['Profile Link'])
+            
+            st.success(f"Found {len(df)} potential matches!")
+            
+            # Make links clickable in the dataframe
+            st.dataframe(
+                df, 
+                column_config={
+                    "Profile Link": st.column_config.LinkColumn("LinkedIn Profile")
+                },
+                use_container_width=True
+            )
+            
+            # Download CSV
             csv = df.to_csv(index=False).encode('utf-8')
-            st.download_button("Download Results", csv, "google_new_pms.csv", "text/csv")
+            st.download_button(
+                label="📥 Download Results as CSV",
+                data=csv,
+                file_name=f"{target_company}_new_hires.csv",
+                mime="text/csv",
+            )
         else:
-            st.warning("No results found. Note: Google indexing can take time for very recent hires.")
+            st.warning("No results found. LinkedIn profiles sometimes take weeks to be indexed by Google.")
+
+# --- INSTRUCTIONS ---
+with st.expander("How this works"):
+    st.info("""
+    1. This app uses 'Google Dorking' to find public LinkedIn profiles.
+    2. It specifically looks for the string **'Started [Month] [Year]'** which appears when someone updates their LinkedIn experience.
+    3. Note: If a user has a 'Private' profile or has blocked search engines, they will not appear here.
+    """)
