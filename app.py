@@ -23,11 +23,17 @@ st.markdown("Search for LinkedIn profiles of Product Managers at Google")
 
 # Sidebar for API key
 st.sidebar.header("Configuration")
-api_key = st.sidebar.text_input(
-    "SerpApi Key",
-    type="password",
-    help="Enter your SerpApi API key. Get one at https://serpapi.com/"
-)
+
+# Try to get API key from secrets.toml first, otherwise use sidebar input
+try:
+    api_key = st.secrets["SERPAPI_KEY"]
+    st.sidebar.success("✅ API key loaded from secrets")
+except (KeyError, FileNotFoundError):
+    api_key = st.sidebar.text_input(
+        "SerpApi Key",
+        type="password",
+        help="Enter your SerpApi API key. Get one at https://serpapi.com/"
+    )
 
 # Calculate date range for last 4-6 months
 def get_date_range():
